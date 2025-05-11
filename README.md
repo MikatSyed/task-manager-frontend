@@ -6,7 +6,7 @@ A modern task management application built with React and Shopify Polaris UI fra
 
 ## 🔗 Live Demo
 
-[View Live Demo](https://your-task-manager-url.vercel.app) - Replace with your actual deployed URL
+[View Live Demo](https://task-manager-pied-iota.vercel.app/) - Replace with your actual deployed URL
 
 ## ✨ Features
 
