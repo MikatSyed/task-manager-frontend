@@ -1,362 +1,221 @@
 "use client"
 
-import React, { useState } from "react"
+import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { MemoryRouter } from "react-router-dom"
+import { AppProvider } from "@shopify/polaris"
+import enTranslations from "@shopify/polaris/locales/en.json"
+import { TaskContext } from "../../context/TaskContext"
+import HomePage from "../../pages/HomePage"
+import { jest } from "@jest/globals"
 
-import { useContext, useCallback, Suspense, useEffect } from "react"
-import { useNavigate } from "react-router-dom"
-import {
-  Page,
-  Layout,
-  Modal,
-  TextContainer,
-  TextField,
-  Stack,
-  Card,
-  Tabs,
-  Icon,
-  Text,
-  SkeletonBodyText,
-  EmptySearchResult,
-  Pagination,
-  Select,
-  Button,
-} from "@shopify/polaris"
-import {
-  SearchIcon,
-  PlusIcon,
-  SortIcon,
-  FilterIcon,
-  CheckCircleIcon,
-  AlertCircleIcon,
-  HomeIcon,
-} from "@shopify/polaris-icons"
-import { TaskContext } from "../context/TaskContext"
-import withErrorHandling from "../hoc/withErrorHandling"
-import "../styles/fonts.css"
-
-// Lazy load the TaskTable component
-const TaskTable = React.lazy(() => import("../components/TaskTable"))
-
-const HomePage = () => {
-  const {
-    pendingTasks,
-    completedTasks,
-    loading,
-    error,
-    deleteTask,
-    searchQuery,
-    setSearchQuery,
-    tasks,
-    // Pagination props
-    currentPage,
-    itemsPerPage,
-    totalItems,
-    totalPages,
-    handlePageChange,
-    handleItemsPerPageChange,
-  } = useContext(TaskContext)
-
-  const [deleteModalOpen, setDeleteModalOpen] = useState(false)
-  const [taskToDelete, setTaskToDelete] = useState(null)
-  const [selectedTab, setSelectedTab] = useState(0)
-  const [isSearchActive, setIsSearchActive] = useState(false)
-  const [searchResults, setSearchResults] = useState([])
-
-  const navigate = useNavigate()
-
-  const handleSearchChange = useCallback(
-    (value) => {
-      setSearchQuery(value)
-      if (value.trim() !== "") {
-        setIsSearchActive(true)
-        // Filter tasks based on search query
-        const results = tasks.filter(
-          (task) =>
-            task.name.toLowerCase().includes(value.toLowerCase()) ||
-            (task.description && task.description.toLowerCase().includes(value.toLowerCase())),
-        )
-        setSearchResults(results)
-      } else {
-        setIsSearchActive(false)
-      }
-    },
-    [setSearchQuery, tasks],
-  )
-
-  const handleDeleteClick = (id) => {
-    setTaskToDelete(id)
-    setDeleteModalOpen(true)
+// Mock the TaskTable component
+jest.mock("../../components/TaskTable", () => {
+  return function MockTaskTable({ title, tasks, onDelete }) {
+    return (
+      <div data-testid={`task-table-${title.toLowerCase().replace(/\s+/g, "-")}`}>
+        <h2>{title}</h2>
+        <ul>
+          {tasks.map((task) => (
+            <li key={task.id}>
+              {task.name}
+              <button onClick={() => onDelete(task.id)}>Delete</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
   }
+})
 
-  const handleDeleteConfirm = () => {
-    if (taskToDelete) {
-      deleteTask(taskToDelete)
-      setDeleteModalOpen(false)
-      setTaskToDelete(null)
-    }
+// Mock Polaris icons
+jest.mock("@shopify/polaris-icons", () => ({
+  CalendarIcon: "CalendarIcon",
+  CheckIcon: "CheckIcon",
+  AlertCircleIcon: "AlertCircleIcon",
+  ChevronDownIcon: "ChevronDownIcon",
+  ChevronUpIcon: "ChevronUpIcon",
+  PlusIcon: "PlusIcon",
+  EditIcon: "EditIcon",
+  DeleteIcon: "DeleteIcon",
+  ClockIcon: "ClockIcon",
+  SearchIcon: "SearchIcon",
+  FilterIcon: "FilterIcon",
+  SortAscendingIcon: "SortAscendingIcon",
+  SortDescendingIcon: "SortDescendingIcon",
+  HomeIcon: "HomeIcon",
+}))
+
+// Mock the SortDropdown component
+jest.mock("react", () => {
+  const originalReact = jest.requireActual("react")
+  return {
+    ...originalReact,
+    useState: jest.fn((initial) => [initial, jest.fn()]),
   }
+})
 
-  const handleDeleteCancel = () => {
-    setDeleteModalOpen(false)
-    setTaskToDelete(null)
-  }
-
-  const handleTabChange = useCallback((selectedTabIndex) => {
-    setSelectedTab(selectedTabIndex)
-  }, [])
-
-  // Items per page options
-  const itemsPerPageOptions = [
-    { label: "5 per page", value: "5" },
-    { label: "10 per page", value: "10" },
-    { label: "25 per page", value: "25" },
-    { label: "50 per page", value: "50" },
+describe("HomePage Component", () => {
+  const mockPendingTasks = [
+    { id: 1, name: "Pending Task 1", status: "Pending" },
+    { id: 2, name: "Pending Task 2", status: "Pending" },
   ]
 
-  const tabs = [
-    {
-      id: "all-tasks",
-      content: (
-        <Stack spacing="tight" alignment="center">
-          <Icon source={HomeIcon} />
-          <span>All Tasks</span>
-          <span className="Polaris-Badge">{tasks.length}</span>
-        </Stack>
-      ),
-      accessibilityLabel: "All tasks",
-      panelID: "all-tasks-content",
-    },
-    {
-      id: "pending-tasks",
-      content: (
-        <Stack spacing="tight" alignment="center">
-          <Icon source={AlertCircleIcon} />
-          <span>Pending</span>
-          <span className="Polaris-Badge">{pendingTasks.length}</span>
-        </Stack>
-      ),
-      accessibilityLabel: "Pending tasks",
-      panelID: "pending-tasks-content",
-    },
-    {
-      id: "completed-tasks",
-      content: (
-        <Stack spacing="tight" alignment="center">
-          <Icon source={CheckCircleIcon} />
-          <span>Completed</span>
-          <span className="Polaris-Badge">{completedTasks.length}</span>
-        </Stack>
-      ),
-      accessibilityLabel: "Completed tasks",
-      panelID: "completed-tasks-content",
-    },
-  ]
+  const mockCompletedTasks = [{ id: 3, name: "Completed Task 1", status: "Completed" }]
 
-  // Animation delay for elements
-  useEffect(() => {
-    const elements = document.querySelectorAll(".fade-in, .slide-up")
-    elements.forEach((element, index) => {
-      element.style.animationDelay = `${index * 0.1}s`
+  const mockDeleteTask = jest.fn()
+  const mockSetSearchQuery = jest.fn()
+  const mockHandleSortChange = jest.fn()
+  const mockNavigate = jest.fn()
+
+  // Mock context value
+  const mockContextValue = {
+    pendingTasks: mockPendingTasks,
+    completedTasks: mockCompletedTasks,
+    tasks: [...mockPendingTasks, ...mockCompletedTasks],
+    loading: false,
+    error: null,
+    deleteTask: mockDeleteTask,
+    searchQuery: "",
+    setSearchQuery: mockSetSearchQuery,
+    currentPage: 1,
+    itemsPerPage: 5,
+    totalItems: 3,
+    totalPages: 1,
+    handlePageChange: jest.fn(),
+    handleItemsPerPageChange: jest.fn(),
+    sortConfig: { sortBy: "created_at", sortDirection: "desc" },
+    handleSortChange: mockHandleSortChange,
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks()
+    jest.spyOn(require("react-router-dom"), "useNavigate").mockImplementation(() => mockNavigate)
+  })
+
+  const renderWithContext = (contextValue = mockContextValue) => {
+    return render(
+      <AppProvider i18n={enTranslations}>
+        <MemoryRouter>
+          <TaskContext.Provider value={contextValue}>
+            <HomePage />
+          </TaskContext.Provider>
+        </MemoryRouter>
+      </AppProvider>,
+    )
+  }
+
+  test("renders page title and search field", () => {
+    renderWithContext()
+
+    // Check page title
+    expect(screen.getByText("Task Manager")).toBeInTheDocument()
+
+    // Check search field
+    expect(screen.getByLabelText("Search tasks")).toBeInTheDocument()
+  })
+
+  test("renders tabs with correct counts", () => {
+    renderWithContext()
+
+    // Check tabs
+    expect(screen.getByText("All Tasks")).toBeInTheDocument()
+    expect(screen.getByText("Pending")).toBeInTheDocument()
+    expect(screen.getByText("Completed")).toBeInTheDocument()
+
+    // Check badge counts
+    const badges = screen.getAllByText(/\d+/)
+    expect(badges[0]).toHaveTextContent("3") // All tasks
+    expect(badges[1]).toHaveTextContent("2") // Pending tasks
+    expect(badges[2]).toHaveTextContent("1") // Completed tasks
+  })
+
+  test("renders task table with all tasks by default", () => {
+    renderWithContext()
+
+    // Check task table
+    expect(screen.getByTestId("task-table-all-tasks")).toBeInTheDocument()
+    expect(screen.getByText("All Tasks")).toBeInTheDocument()
+
+    // Check task items
+    expect(screen.getByText("Pending Task 1")).toBeInTheDocument()
+    expect(screen.getByText("Pending Task 2")).toBeInTheDocument()
+    expect(screen.getByText("Completed Task 1")).toBeInTheDocument()
+  })
+
+  test("handles search query changes", () => {
+    renderWithContext()
+
+    // Change search query
+    fireEvent.change(screen.getByLabelText("Search tasks"), { target: { value: "test query" } })
+
+    // Check if setSearchQuery was called with the correct value
+    expect(mockSetSearchQuery).toHaveBeenCalledWith("test query")
+  })
+
+  test("opens delete confirmation modal when delete button is clicked", async () => {
+    renderWithContext()
+
+    // Click delete button for the first task
+    fireEvent.click(screen.getAllByText("Delete")[0])
+
+    // Check if delete confirmation modal is shown
+    await waitFor(() => {
+      expect(screen.getByText("Delete Task")).toBeInTheDocument()
+      expect(
+        screen.getByText("Are you sure you want to delete this task? This action cannot be undone."),
+      ).toBeInTheDocument()
     })
-  }, [])
+  })
 
-  // Get current tasks based on tab selection
-  const getCurrentTasks = () => {
-    if (isSearchActive) return searchResults
+  test("calls deleteTask when delete is confirmed", async () => {
+    renderWithContext()
 
-    switch (selectedTab) {
-      case 1:
-        return pendingTasks
-      case 2:
-        return completedTasks
-      default:
-        return tasks
-    }
-  }
+    // Click delete button for the first task
+    fireEvent.click(screen.getAllByText("Delete")[0])
 
-  // Get current tasks with pagination
-  const getCurrentPageTasks = () => {
-    const currentTasks = getCurrentTasks()
-    const startIndex = (currentPage - 1) * itemsPerPage
-    const endIndex = Math.min(startIndex + itemsPerPage, currentTasks.length)
-    return currentTasks.slice(startIndex, endIndex)
-  }
+    // Wait for modal to appear
+    await waitFor(() => {
+      expect(screen.getByText("Delete Task")).toBeInTheDocument()
+    })
 
-  // Get total pages for the current view
-  const getCurrentTotalPages = () => {
-    return Math.max(1, Math.ceil(getCurrentTasks().length / itemsPerPage))
-  }
+    // Click confirm delete button
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }))
 
-  return (
-    <Page
-      title={
-        <Text variant="heading2xl" as="h1" fontWeight="bold" style={{ fontFamily: "var(--font-heading)" }}>
-          Task Manager
-        </Text>
-      }
-      subtitle="Organize and manage your tasks efficiently"
-      primaryAction={{
-        content: "Create New Task",
-        icon: PlusIcon,
-        onAction: () => navigate("/create"),
-        style: {
-          background: "linear-gradient(to right, var(--color-primary), var(--color-primary-dark))",
-          boxShadow: "var(--shadow-md)",
-        },
-      }}
-     
-    >
-      <Layout>
-        <Layout.Section>
-          {/* Search Bar */}
-          <div className="fade-in" style={{ marginBottom: "var(--spacing-md)" }}>
-            <Card>
-              <Card.Section>
-                <TextField
-                  label="Search tasks"
-                  value={searchQuery}
-                  onChange={handleSearchChange}
-                  placeholder="Search by name or description"
-                  clearButton
-                  onClearButtonClick={() => {
-                    setSearchQuery("")
-                    setIsSearchActive(false)
-                  }}
-                  prefix={<Icon source={SearchIcon} />}
-                  autoComplete="off"
-                />
-              </Card.Section>
-            </Card>
-          </div>
+    // Check if deleteTask was called with the correct task ID
+    expect(mockDeleteTask).toHaveBeenCalledWith(1)
+  })
 
-          {/* Tabs Navigation */}
-          <div className="fade-in" style={{ marginBottom: "var(--spacing-md)" }}>
-            <Card>
-              <Card.Section>
-                <Tabs tabs={tabs} selected={selectedTab} onSelect={handleTabChange} fitted />
-              </Card.Section>
-            </Card>
-          </div>
+  test("closes delete confirmation modal when cancel is clicked", async () => {
+    renderWithContext()
 
-          {/* Content Section */}
-          <div className="content-section">
-            {isSearchActive ? (
-              <div className="slide-up">
-                {searchResults.length > 0 ? (
-                  <Suspense
-                    fallback={
-                      <Card sectioned>
-                        <SkeletonBodyText lines={3} />
-                      </Card>
-                    }
-                  >
-                    <TaskTable
-                      title={`Search Results (${searchResults.length})`}
-                      tasks={getCurrentPageTasks()}
-                      loading={loading}
-                      onDelete={handleDeleteClick}
-                      error={error}
-                    />
-                  </Suspense>
-                ) : (
-                  <Card sectioned>
-                    <EmptySearchResult
-                      title="No tasks found"
-                      description={`No tasks match the search query "${searchQuery}"`}
-                      withIllustration
-                    />
-                  </Card>
-                )}
-              </div>
-            ) : (
-              <div className="slide-up">
-                <Suspense
-                  fallback={
-                    <Card sectioned>
-                      <SkeletonBodyText lines={3} />
-                    </Card>
-                  }
-                >
-                  <TaskTable
-                    title={selectedTab === 0 ? "All Tasks" : selectedTab === 1 ? "Pending Tasks" : "Completed Tasks"}
-                    tasks={getCurrentPageTasks()}
-                    loading={loading}
-                    onDelete={handleDeleteClick}
-                    error={error}
-                  />
-                </Suspense>
-              </div>
-            )}
-          </div>
+    // Click delete button for the first task
+    fireEvent.click(screen.getAllByText("Delete")[0])
 
-          {/* Pagination Controls */}
-          {getCurrentTasks().length > 0 && (
-            <div className="pagination-section" style={{ 
-              marginTop: "var(--spacing-md)", 
-              marginBottom: "var(--spacing-lg)" 
-            }}
-            >
-              <Card sectioned>
-                <Stack distribution="center" alignment="center" wrap={false}>
-                  <Stack.Item>
-                    <TextContainer>
-                      <Text variant="bodySm" as="p" color="subdued">
-                        Showing {Math.min((currentPage - 1) * itemsPerPage + 1, getCurrentTasks().length)} -{" "}
-                        {Math.min(currentPage * itemsPerPage, getCurrentTasks().length)} of {getCurrentTasks().length}{" "}
-                        tasks
-                      </Text>
-                    </TextContainer>
-                  </Stack.Item>
-                  <Stack.Item fill>
-                    <div style={{ display: "flex", justifyContent: "center" }}>
-                      <Pagination
-                        hasPrevious={currentPage > 1}
-                        onPrevious={() => handlePageChange(currentPage - 1)}
-                        hasNext={currentPage < getCurrentTotalPages()}
-                        onNext={() => handlePageChange(currentPage + 1)}
-                        label={`${currentPage} of ${getCurrentTotalPages()}`}
-                      />
-                    </div>
-                  </Stack.Item>
-                  <Stack.Item>
-                    <Select
-                      label="Items per page"
-                      labelHidden
-                      options={itemsPerPageOptions}
-                      value={itemsPerPage.toString()}
-                      onChange={handleItemsPerPageChange}
-                    />
-                  </Stack.Item>
-                </Stack>
-              </Card>
-            </div>
-          )}
-        </Layout.Section>
-      </Layout>
+    // Wait for modal to appear
+    await waitFor(() => {
+      expect(screen.getByText("Delete Task")).toBeInTheDocument()
+    })
 
-      <Modal
-        open={deleteModalOpen}
-        onClose={handleDeleteCancel}
-        title={
-          <Text variant="headingLg" as="h2" fontWeight="semibold" style={{ fontFamily: "var(--font-heading)" }}>
-            Delete Task
-          </Text>
-        }
-        primaryAction={{
-          content: "Delete",
-          onAction: handleDeleteConfirm,
-          destructive: true,
-        }}
-       
-      >
-        <Modal.Section>
-          <TextContainer>
-            <p>Are you sure you want to delete this task? This action cannot be undone.</p>
-          </TextContainer>
-        </Modal.Section>
-      </Modal>
-    </Page>
-  )
-}
+    // Click cancel button
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }))
 
-export default withErrorHandling(HomePage)
+    // Check if modal is closed
+    await waitFor(() => {
+      expect(screen.queryByText("Delete Task")).not.toBeInTheDocument()
+    })
+
+    // Check that deleteTask was not called
+    expect(mockDeleteTask).not.toHaveBeenCalled()
+  })
+
+  test("navigates to create page when create button is clicked", () => {
+    renderWithContext()
+
+    // Find and click the create button
+    const createButton = screen.getByText("Create New Task")
+    fireEvent.click(createButton)
+
+    // Check if navigate was called with the correct path
+    expect(mockNavigate).toHaveBeenCalledWith("/create")
+  })
+})
